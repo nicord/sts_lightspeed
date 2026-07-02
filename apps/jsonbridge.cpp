@@ -126,8 +126,10 @@ json buildStateJson(const GameContext &gc) {
     state["relics"] = relics;
 
     json potions = json::array();
-    for (int i = 0; i < gc.potionCount; ++i) {
-        potions.push_back(potionEnumNames[static_cast<int>(gc.potions[i])]);
+    for (int i = 0; i < gc.potionCapacity; ++i) { // slots can be sparse after drinking
+        if (gc.potions[i] != Potion::EMPTY_POTION_SLOT && gc.potions[i] != Potion::INVALID) {
+            potions.push_back(potionEnumNames[static_cast<int>(gc.potions[i])]);
+        }
     }
     state["potions"] = potions;
 
@@ -530,7 +532,7 @@ void handleEventScreen(GameContext &gc) {
             c["label"] = label;
             choices.push_back(c);
         }
-        emitLine("EVENT", buildStateJson(gc), choices);
+        emitLine("NEOW", buildStateJson(gc), choices);
         int choice = readChoice(0);
         if (choice < 0 || choice > 3) choice = 0;
         gc.chooseNeowOption(gc.info.neowRewards[choice]);
