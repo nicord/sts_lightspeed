@@ -34,3 +34,8 @@ target_link_directories(small-test PRIVATE json::nlohmann_json)
 target_include_directories(small-test PUBLIC include)
 target_include_directories(small-test PUBLIC json/include)
 target_include_directories(small-test PUBLIC bindings)
+
+add_executable(jsonbridge apps/jsonbridge.cpp ${sts_lightspeed_SOURCES})
+target_link_directories(jsonbridge PRIVATE json::nlohmann_json)
+target_include_directories(jsonbridge PUBLIC include)
+target_include_directories(jsonbridge PUBLIC json/include)
