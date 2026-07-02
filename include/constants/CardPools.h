@@ -60,7 +60,7 @@ namespace sts {
     }
 
 
-    static constexpr CardId curseCardPool[] = { CardId::REGRET, CardId::INJURY, CardId::SHAME, CardId::PARASITE, CardId::NORMALITY, CardId::DOUBT, CardId::WRITHE, CardId::PAIN, CardId::DECAY, CardId::CLUMSY };
+    static constexpr CardId curseCardPool[] = { CardId::REGRET,CardId::WRITHE,CardId::DECAY,CardId::PAIN,CardId::PARASITE,CardId::DOUBT,CardId::INJURY,CardId::CLUMSY,CardId::NORMALITY,CardId::SHAME };
     static constexpr int curseCardPoolSize = 10;
 
 
@@ -132,7 +132,7 @@ namespace sts {
 
     namespace ColorlessRarityCardPool {
 
-        static constexpr CardId colorlessCardBlob[] { CardId::BANDAGE_UP,CardId::BLIND,CardId::DARK_SHACKLES,CardId::DEEP_BREATH,CardId::DISCOVERY,CardId::DRAMATIC_ENTRANCE,CardId::ENLIGHTENMENT,CardId::FINESSE,CardId::FLASH_OF_STEEL,CardId::FORETHOUGHT,CardId::GOOD_INSTINCTS,CardId::IMPATIENCE,CardId::JACK_OF_ALL_TRADES,CardId::MADNESS,CardId::MIND_BLAST,CardId::PANACEA,CardId::PANIC_BUTTON,CardId::PURITY,CardId::SWIFT_STRIKE,CardId::TRIP,CardId::APOTHEOSIS,CardId::CHRYSALIS,CardId::HAND_OF_GREED,CardId::MAGNETISM,CardId::MASTER_OF_STRATEGY,CardId::MAYHEM,CardId::METAMORPHOSIS,CardId::PANACHE,CardId::SADISTIC_NATURE,CardId::SECRET_TECHNIQUE,CardId::SECRET_WEAPON,CardId::THE_BOMB,CardId::THINKING_AHEAD,CardId::TRANSMUTATION,CardId::VIOLENCE, };
+        static constexpr CardId colorlessCardBlob[] { CardId::DARK_SHACKLES,CardId::PANIC_BUTTON,CardId::TRIP,CardId::DRAMATIC_ENTRANCE,CardId::IMPATIENCE,CardId::BLIND,CardId::BANDAGE_UP,CardId::DEEP_BREATH,CardId::FLASH_OF_STEEL,CardId::FORETHOUGHT,CardId::ENLIGHTENMENT,CardId::PURITY,CardId::PANACEA,CardId::DISCOVERY,CardId::FINESSE,CardId::GOOD_INSTINCTS,CardId::SWIFT_STRIKE,CardId::JACK_OF_ALL_TRADES,CardId::MIND_BLAST,CardId::MADNESS,CardId::SADISTIC_NATURE,CardId::THE_BOMB,CardId::SECRET_TECHNIQUE,CardId::VIOLENCE,CardId::PANACHE,CardId::SECRET_WEAPON,CardId::APOTHEOSIS,CardId::MAYHEM,CardId::HAND_OF_GREED,CardId::TRANSMUTATION,CardId::CHRYSALIS,CardId::MAGNETISM,CardId::MASTER_OF_STRATEGY,CardId::METAMORPHOSIS,CardId::THINKING_AHEAD, };
         static constexpr int colorlessGroupSize[3] = {0, 20, 15};
         static constexpr int colorlessGroupOffset[3] = {0, 0, 20};
 
