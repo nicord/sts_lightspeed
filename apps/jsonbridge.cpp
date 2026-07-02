@@ -3,17 +3,36 @@
 // line to stdout describing the screen + choices, then reads one JSON line
 // from stdin `{"choose": <index>}` to pick.
 //
-// Combat is NOT bridged: it is resolved internally by sts::search::SimpleAgent,
-// the cheapest competent existing battle AI in this codebase (a fast greedy
-// heuristic; the heavier MCTS searchers ScumSearchAgent2/BattleScumSearcher2
-// were intentionally NOT used here -- they're overkill for bulk simulation
-// where only the out-of-combat decisions matter to the driver).
+// Combat is NOT bridged: it is resolved internally by a battle agent chosen
+// via `--combat=simple|scum` (default simple):
+//  - simple: sts::search::SimpleAgent, the cheapest competent existing battle
+//    AI in this codebase (a fast greedy heuristic).
+//  - scum: sts::search::ScumSearchAgent2's playoutBattle(), which drives the
+//    same MCTS BattleScumSearcher2 used by apps/main.cpp's scum-search modes
+//    (see ScumSearchAgent2.cpp) -- a much stronger, much slower battle AI.
+//    The simulation count per decision is controlled by `--combat-sims=N`
+//    (mirrors ScumSearchAgent2::simulationCountBase; default 1000). Each
+//    BattleScumSearcher2 is constructed fresh per decision point and seeds
+//    its own RNG deterministically from `bc.seed + bc.floorNum` (see
+//    BattleScumSearcher2's constructor), so search(N) always runs exactly N
+//    simulations and returns -- no wall-clock dependency, so results stay
+//    reproducible per run seed.
+//    CAVEAT: BattleScumSearcher2's random rollout (playoutRandom) has no
+//    internal step bound, so on rare pathological battle states (observed on
+//    real seeds) a single step() can hang regardless of --combat-sims. See
+//    tryPlayoutBattleScum()/resolveBattle(): every --combat=scum battle runs
+//    under a `--combat-timeout-ms` wall-clock watchdog (default 8000ms) on a
+//    worker thread and falls back to SimpleAgent for that one fight if the
+//    deadline passes, so the run always terminates.
 //
 // Reference material used while writing this (do not delete, useful context
 // for future edits):
 //  - src/sim/ConsoleSimulator.cpp: exact GameContext call patterns per screen.
 //  - src/sim/search/SimpleAgent.cpp (::playout / ::playoutBattle): the
 //    BattleContext init/playoutBattle/exitBattle recipe.
+//  - src/sim/search/ScumSearchAgent2.cpp (::playoutBattle): the
+//    BattleScumSearcher2 construct/search(simulationCount)/step recipe used
+//    for --combat=scum.
 //  - the prior fidelity_harness.cpp spike: confirmed method names/signatures
 //    for chooseNeowOption/transitionToMapNode/chooseSelectCardScreenOption/
 //    chooseEventOption/chooseCampfireOption/chooseTreasureRoomOption/
@@ -27,6 +46,10 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <random>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
 #include <nlohmann/json.hpp>
 
@@ -47,6 +70,8 @@
 
 #include "combat/BattleContext.h"
 #include "sim/search/SimpleAgent.h"
+#include "sim/search/ScumSearchAgent2.h"
+#include "sim/search/BattleScumSearcher2.h"
 
 using namespace sts;
 using json = nlohmann::json;
@@ -54,6 +79,21 @@ using json = nlohmann::json;
 namespace {
 
 bool g_auto = false;
+
+/** Which battle agent resolves combat: SIMPLE (SimpleAgent, default) or SCUM (ScumSearchAgent2 MCTS). */
+enum class CombatMode { SIMPLE, SCUM };
+CombatMode g_combatMode = CombatMode::SIMPLE;
+
+/** Simulations per decision point for --combat=scum (mirrors ScumSearchAgent2::simulationCountBase). */
+std::int64_t g_combatSims = 1000;
+
+/**
+ * Wall-clock cap (ms) for a single --combat=scum battle. BattleScumSearcher2's random rollout
+ * (playoutRandom) has no internal step bound, so a battle state that never terminates under pure
+ * random play (rare, but observed on real seeds -- e.g. certain block/regen stalemates) can hang a
+ * `step()` call indefinitely regardless of --combat-sims. This is a safety net, not a tuning knob.
+ */
+std::int64_t g_combatTimeoutMs = 8000;
 
 /** Reads one `{"choose": <index>}` line from stdin (blocking), or returns a programmatic default in --auto mode. */
 int readChoice(int autoDefault) {
@@ -899,11 +939,61 @@ void handleEventScreen(GameContext &gc) {
     gc.chooseEventOption(choice);
 }
 
+// ---------------------------------------------------------------------------
+// COMBAT DISPATCH
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves one battle with the MCTS agent under a wall-clock watchdog (see g_combatTimeoutMs):
+ * runs ScumSearchAgent2::playoutBattle on a private copy of `bc` on a worker thread; if it
+ * finishes within budget, commits the copy back into `bc` and returns true. If the deadline
+ * passes (a pathological battle state that never terminates under BattleScumSearcher2's random
+ * rollout -- see g_combatTimeoutMs's doc comment), the worker thread is detached (it keeps
+ * running harmlessly to completion on its own orphaned copy; the process eventually exits at
+ * emitGameOverAndExit so it never blocks shutdown) and this returns false, leaving the original
+ * `bc` untouched for the caller to resolve some other way (SimpleAgent fallback).
+ */
+bool tryPlayoutBattleScum(search::ScumSearchAgent2 &agent, BattleContext &bc) {
+    auto resultHolder = std::make_shared<BattleContext>(bc);
+    auto done = std::make_shared<std::atomic<bool>>(false);
+
+    std::thread worker([&agent, resultHolder, done]() {
+        agent.playoutBattle(*resultHolder);
+        done->store(true, std::memory_order_release);
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(g_combatTimeoutMs);
+    while (!done->load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    if (done->load(std::memory_order_acquire)) {
+        worker.join();
+        bc = *resultHolder;
+        return true;
+    }
+
+    std::cerr << "jsonbridge: --combat=scum battle exceeded " << g_combatTimeoutMs
+              << "ms watchdog on floor " << bc.floorNum << " (" << monsterEncounterStrings[static_cast<int>(bc.encounter)]
+              << "); falling back to SimpleAgent for this fight" << std::endl;
+    worker.detach(); // orphaned copy keeps running to completion harmlessly; process exit doesn't wait on it
+    return false;
+}
+
+/** Resolves one battle: --combat=scum with a watchdog + SimpleAgent fallback, else plain SimpleAgent. */
+void resolveBattle(CombatMode mode, search::SimpleAgent &simpleAgent, search::ScumSearchAgent2 &scumAgent, BattleContext &bc) {
+    if (mode == CombatMode::SCUM && tryPlayoutBattleScum(scumAgent, bc)) {
+        return;
+    }
+    simpleAgent.playoutBattle(bc);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
     if (argc < 4) {
-        std::cerr << "usage: jsonbridge <seedString> <I|S|D|W> <ascensionLevel> [--auto]" << std::endl;
+        std::cerr << "usage: jsonbridge <seedString> <I|S|D|W> <ascensionLevel> [--auto] "
+                      "[--combat=simple|scum] [--combat-sims=N] [--combat-timeout-ms=N]" << std::endl;
         return 1;
     }
 
@@ -912,8 +1002,23 @@ int main(int argc, char **argv) {
     int ascension = std::stoi(argv[3]);
 
     for (int i = 4; i < argc; ++i) {
-        if (std::string(argv[i]) == "--auto") {
+        std::string arg = argv[i];
+        if (arg == "--auto") {
             g_auto = true;
+        } else if (arg.rfind("--combat=", 0) == 0) {
+            std::string mode = arg.substr(9);
+            if (mode == "simple") {
+                g_combatMode = CombatMode::SIMPLE;
+            } else if (mode == "scum") {
+                g_combatMode = CombatMode::SCUM;
+            } else {
+                std::cerr << "jsonbridge: bad --combat mode '" << mode << "' (want simple|scum)" << std::endl;
+                return 1;
+            }
+        } else if (arg.rfind("--combat-sims=", 0) == 0) {
+            g_combatSims = std::stoll(arg.substr(14));
+        } else if (arg.rfind("--combat-timeout-ms=", 0) == 0) {
+            g_combatTimeoutMs = std::stoll(arg.substr(20));
         }
     }
 
@@ -931,16 +1036,25 @@ int main(int argc, char **argv) {
     std::uint64_t seed = SeedHelper::getLong(seedStr);
     GameContext gc(cc, seed, ascension);
     // IMPORTANT: do NOT set gc.skipBattles = true -- combat must be resolved
-    // for real via SimpleAgent, not skipped to an instant win.
+    // for real via the chosen battle agent, not skipped to an instant win.
 
-    search::SimpleAgent battleAgent; // constructed once, reused across the whole run (see SimpleAgent::playout)
+    search::SimpleAgent simpleBattleAgent; // constructed once, reused across the whole run (see SimpleAgent::playout)
+    search::ScumSearchAgent2 scumBattleAgent; // constructed once; playoutBattle rebuilds its searcher per decision
+    scumBattleAgent.simulationCountBase = g_combatSims;
+    // ScumSearchAgent2::rng is only used by its own out-of-combat policy helpers, which jsonbridge
+    // never calls (out-of-combat decisions are driven by this file's handle*() functions instead).
+    // Determinism-per-seed for --combat=scum comes from BattleScumSearcher2's own randGen, which its
+    // constructor seeds from `bc.seed + bc.floorNum` (see BattleScumSearcher2.cpp) -- deterministic
+    // given the run seed, with no wall-clock dependency. We still seed `rng` from the run seed for
+    // good measure / future-proofing against any as-yet-unused RNG consumers.
+    scumBattleAgent.rng = std::default_random_engine(static_cast<std::default_random_engine::result_type>(seed));
 
     while (gc.outcome == GameOutcome::UNDECIDED) {
         switch (gc.screenState) {
             case ScreenState::BATTLE: {
                 BattleContext bc;
                 bc.init(gc);
-                battleAgent.playoutBattle(bc); // no JSON line ever printed for combat
+                resolveBattle(g_combatMode, simpleBattleAgent, scumBattleAgent, bc); // no JSON line ever printed for combat
                 bc.exitBattle(gc);
                 break;
             }
