@@ -164,6 +164,28 @@ void emitLine(const std::string &screen, const json &state, const json &choices)
 // MAP_SCREEN
 // ---------------------------------------------------------------------------
 
+/** Serializes the whole current-act map as [{x,y,symbol,children:[{x,y}]}] for driver-side lookahead. */
+json mapToJson(const GameContext &gc) {
+    json nodes = json::array();
+    for (int y = 0; y < 15; ++y) {
+        for (int x = 0; x < 7; ++x) {
+            const MapNode &n = gc.map->getNode(x, y);
+            if (n.room == Room::NONE || n.room == Room::INVALID) continue;
+            json nj;
+            nj["x"] = x;
+            nj["y"] = y;
+            nj["symbol"] = std::string(1, getRoomSymbol(n.room));
+            json children = json::array();
+            for (int i = 0; i < n.edgeCount; ++i) {
+                children.push_back(json{{"x", n.edges[i]}, {"y", y + 1}});
+            }
+            nj["children"] = children;
+            nodes.push_back(nj);
+        }
+    }
+    return nodes;
+}
+
 /** Handles MAP_SCREEN: emits available next-node choices, reads back the chosen map-node x. */
 void handleMapScreen(GameContext &gc) {
     json choices = json::array();
@@ -201,7 +223,9 @@ void handleMapScreen(GameContext &gc) {
         }
     }
 
-    emitLine("MAP", buildStateJson(gc), choices);
+    json state = buildStateJson(gc);
+    state["map"] = mapToJson(gc); // full act map for driver-side route lookahead
+    emitLine("MAP", state, choices);
 
     int defaultIdx = choices.empty() ? 0 : choices[0]["index"].get<int>();
     int choice = readChoice(defaultIdx);
@@ -323,6 +347,21 @@ void handleBossRelicRewards(GameContext &gc) {
 // CARD_SELECT (Smith/Purge/Transform/Bottle/Bonfire Spirits, etc.)
 // ---------------------------------------------------------------------------
 
+/** Human name for a CardSelectScreenType — tells the driver WHY it is picking a card. */
+const char *selectTypeName(CardSelectScreenType t) {
+    switch (t) {
+        case CardSelectScreenType::TRANSFORM: return "TRANSFORM";
+        case CardSelectScreenType::TRANSFORM_UPGRADE: return "TRANSFORM_UPGRADE";
+        case CardSelectScreenType::UPGRADE: return "UPGRADE";
+        case CardSelectScreenType::REMOVE: return "REMOVE";
+        case CardSelectScreenType::DUPLICATE: return "DUPLICATE";
+        case CardSelectScreenType::OBTAIN: return "OBTAIN";
+        case CardSelectScreenType::BOTTLE: return "BOTTLE";
+        case CardSelectScreenType::BONFIRE_SPIRITS: return "BONFIRE_SPIRITS";
+        default: return "INVALID";
+    }
+}
+
 /** Handles CARD_SELECT: post-reward-adjacent card picks (rest-site Smith, event Remove/Transform/Upgrade/Bottle/Bonfire). */
 void handleCardSelect(GameContext &gc) {
     json choices = json::array();
@@ -333,7 +372,9 @@ void handleCardSelect(GameContext &gc) {
         choices.push_back(c);
     }
 
-    emitLine("CARD_SELECT", buildStateJson(gc), choices);
+    json state = buildStateJson(gc);
+    state["selectType"] = selectTypeName(gc.info.selectScreenType);
+    emitLine("CARD_SELECT", state, choices);
 
     int defaultIdx = choices.empty() ? 0 : 0;
     int choice = readChoice(defaultIdx);
