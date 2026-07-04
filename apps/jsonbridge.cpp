@@ -149,6 +149,11 @@ json buildStateJson(const GameContext &gc) {
     state["hp"] = gc.curHp;
     state["maxHp"] = gc.maxHp;
     state["gold"] = gc.gold;
+    // The current act's boss encounter name (e.g. "Slime Boss"), known from the act's start. The TS
+    // handlers read it as `game_state.act_boss` for `actBoss` KB conditions (card conditional rules,
+    // event rules) and boss-relic/map context. INVALID before a boss is assigned emits "INVALID",
+    // which no rule matches (fail-closed).
+    state["actBoss"] = monsterEncounterStrings[static_cast<int>(gc.boss)];
 
     json deck = json::array();
     for (const auto &c : gc.deck.cards) {
@@ -637,7 +642,9 @@ void handleEventScreen(GameContext &gc) {
             choices.push_back(cj);
             visibleIdxs.push_back(i);
         }
-        emitLine("EVENT", buildStateJson(gc), choices);
+        json state = buildStateJson(gc);
+        state["eventName"] = eventGameNames[static_cast<int>(gc.curEvent)];
+        emitLine("EVENT", state, choices);
         int choice1 = readChoice(visibleIdxs.empty() ? 0 : visibleIdxs[0]);
         int choice2 = choice1;
         if (!g_auto) {
@@ -932,7 +939,11 @@ void handleEventScreen(GameContext &gc) {
             break;
     }
 
-    emitLine("EVENT", buildStateJson(gc), choices);
+    json state = buildStateJson(gc);
+    // The event's in-game display name (eventGameNames), so the TS event resolver can key the KB advice
+    // table on it. The driver normalizes it to the KB's `eventName` spelling.
+    state["eventName"] = eventGameNames[static_cast<int>(gc.curEvent)];
+    emitLine("EVENT", state, choices);
 
     int defaultIdx = choices.empty() ? 0 : choices[0]["index"].get<int>();
     int choice = readChoice(defaultIdx);
