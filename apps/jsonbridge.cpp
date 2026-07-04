@@ -623,7 +623,11 @@ void handleEventScreen(GameContext &gc) {
             c["label"] = label;
             choices.push_back(c);
         }
-        emitLine("NEOW", buildStateJson(gc), choices);
+        // Include the full act map at Neow (floor 0) so the driver's Neow policy can read it — the
+        // enemies-1-HP snipe conditional and the curse/early-shop conditional both need it.
+        json neowState = buildStateJson(gc);
+        neowState["map"] = mapToJson(gc);
+        emitLine("NEOW", neowState, choices);
         int choice = readChoice(0);
         if (choice < 0 || choice > 3) choice = 0;
         gc.chooseNeowOption(gc.info.neowRewards[choice]);
