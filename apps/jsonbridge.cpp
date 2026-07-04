@@ -166,6 +166,11 @@ json buildStateJson(const GameContext &gc) {
         json rj;
         rj["id"] = getRelicName(r.id);
         rj["name"] = getRelicName(r.id);
+        // Per-relic counter (RelicInstance.data): charges/tallies the engine maintains, e.g. Neow's
+        // Lament remaining combats, Velvet Choker cards-played, Ink Bottle/Nunchaku/Happy Flower. The
+        // agent handlers read relic counters (e.g. buff-aware routing keys on Neow's Lament); without
+        // this they'd all see 0.
+        rj["counter"] = r.data;
         relics.push_back(rj);
     }
     state["relics"] = relics;
